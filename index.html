@@ -9,9 +9,7 @@
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-database-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-auth-compat.js"></script>
     <style>
-        /* SEU CSS COMPLETO AQUI (mantenha todo o estilo que você já tem) */
         * {
             margin: 0;
             padding: 0;
@@ -698,9 +696,39 @@
             width: 18px;
             height: 18px;
         }
+        
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background-color: #f44336;
+            color: white;
+        }
+        
+        .connection-online {
+            background-color: #4CAF50 !important;
+        }
+        
+        .connection-offline {
+            background-color: #f44336 !important;
+        }
     </style>
 </head>
 <body>
+    <!-- Status de conexão -->
+    <div id="connectionStatus" class="connection-status connection-offline">
+        <i class="fas fa-wifi-slash"></i>
+        <span>OFFLINE</span>
+    </div>
+
     <div class="container">
         <header>
             <div class="logo">
@@ -1233,7 +1261,6 @@
         // Inicializar Firebase
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
-        const auth = firebase.auth();
 
         // Dados da aplicação
         let vehicles = [];
@@ -1243,7 +1270,8 @@
         let selectedVehicleType = 'car';
         let currentVehicle = null;
         let editingMaintenanceId = null;
-        let currentUserId = null;
+        let isOnline = false;
+        let userId = null;
 
         // Inicialização quando o DOM estiver carregado
         document.addEventListener('DOMContentLoaded', async function() {
@@ -1261,16 +1289,17 @@
                 document.getElementById('refuelDate').value = formattedDate;
                 document.getElementById('maintenanceDate').value = formattedDate;
                 
-                // Inicializar autenticação
-                await initAuth();
+                // Gerar ou obter ID de usuário único
+                userId = getOrCreateUserId();
+                
+                // Monitorar estado da conexão
+                monitorConnection();
                 
                 // Carregar configurações
                 await loadSettings();
                 
-                // Carregar dados
-                await loadVehicles();
-                await loadRefuels();
-                await loadMaintenances();
+                // Carregar dados do Firebase
+                await loadAllData();
                 
                 // Atualizar estatísticas
                 updateStatistics();
@@ -1291,29 +1320,68 @@
             }
         }
         
-        // Inicializar autenticação
-        async function initAuth() {
-            return new Promise((resolve, reject) => {
-                auth.onAuthStateChanged(async (user) => {
-                    if (user) {
-                        currentUserId = user.uid;
-                        console.log('✅ Usuário autenticado:', user.uid);
-                        resolve();
-                    } else {
-                        try {
-                            console.log('🔄 Criando usuário anônimo...');
-                            const result = await auth.signInAnonymously();
-                            currentUserId = result.user.uid;
-                            console.log('✅ Usuário anônimo criado:', currentUserId);
-                            resolve();
-                        } catch (error) {
-                            console.error('❌ Erro na autenticação:', error);
-                            console.log('⚠️ Usando modo offline');
-                            resolve();
-                        }
-                    }
-                });
+        // Gerar ou obter ID de usuário único
+        function getOrCreateUserId() {
+            let id = localStorage.getItem('fuelmanager_userId');
+            if (!id) {
+                id = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('fuelmanager_userId', id);
+            }
+            return id;
+        }
+        
+        // Monitorar estado da conexão
+        function monitorConnection() {
+            const connectedRef = database.ref(".info/connected");
+            
+            connectedRef.on("value", (snap) => {
+                const connectionStatus = document.getElementById('connectionStatus');
+                if (snap.val() === true) {
+                    console.log("✅ Conectado ao Firebase");
+                    isOnline = true;
+                    connectionStatus.className = "connection-status connection-online";
+                    connectionStatus.innerHTML = '<i class="fas fa-wifi"></i><span>ONLINE</span>';
+                    
+                    // Sincronizar dados locais com o Firebase
+                    syncLocalDataWithFirebase();
+                } else {
+                    console.log("❌ Desconectado do Firebase");
+                    isOnline = false;
+                    connectionStatus.className = "connection-status connection-offline";
+                    connectionStatus.innerHTML = '<i class="fas fa-wifi-slash"></i><span>OFFLINE</span>';
+                }
             });
+        }
+        
+        // Sincronizar dados locais com Firebase
+        async function syncLocalDataWithFirebase() {
+            try {
+                console.log('🔄 Sincronizando dados locais com Firebase...');
+                
+                // Salvar configurações
+                if (Object.keys(settings).length > 0) {
+                    await database.ref(`users/${userId}/settings`).set(settings);
+                }
+                
+                // Salvar veículos
+                for (const vehicle of vehicles) {
+                    await database.ref(`users/${userId}/vehicles/${vehicle.id}`).set(vehicle);
+                }
+                
+                // Salvar abastecimentos
+                for (const refuel of refuels) {
+                    await database.ref(`users/${userId}/refuels/${refuel.id}`).set(refuel);
+                }
+                
+                // Salvar manutenções
+                for (const maintenance of maintenances) {
+                    await database.ref(`users/${userId}/maintenances/${maintenance.id}`).set(maintenance);
+                }
+                
+                console.log('✅ Dados sincronizados com Firebase');
+            } catch (error) {
+                console.error('❌ Erro ao sincronizar dados:', error);
+            }
         }
         
         // Carregar do localStorage (fallback)
@@ -1327,94 +1395,19 @@
                 fuelPrice: 5.89
             };
             
-            loadVehicles();
-            loadRefuels();
-            loadMaintenances();
-            updateDashboard();
+            updateUI();
         }
         
-        // FUNÇÕES DO REALTIME DATABASE
-        
-        // Salvar veículo no Realtime Database
-        async function saveVehicleToDatabase(vehicle) {
+        // Carregar todos os dados do Firebase
+        async function loadAllData() {
             try {
-                if (!currentUserId) {
-                    console.log('⚠️ Sem usuário, salvando apenas localmente');
-                    return;
-                }
+                console.log('📥 Carregando dados do Firebase...');
                 
-                console.log('💾 Salvando veículo no Firebase:', vehicle.id);
-                
-                await database.ref(`users/${currentUserId}/vehicles/${vehicle.id}`).set({
-                    ...vehicle,
-                    createdAt: Date.now()
-                });
-                
-                console.log('✅ Veículo salvo no Firebase');
-            } catch (error) {
-                console.error('❌ Erro ao salvar veículo no Firebase:', error);
-                throw error;
-            }
-        }
-        
-        // Salvar abastecimento no Realtime Database
-        async function saveRefuelToDatabase(refuel) {
-            try {
-                if (!currentUserId) {
-                    console.log('⚠️ Sem usuário, salvando apenas localmente');
-                    return;
-                }
-                
-                console.log('💾 Salvando abastecimento no Firebase:', refuel.id);
-                
-                await database.ref(`users/${currentUserId}/refuels/${refuel.id}`).set({
-                    ...refuel,
-                    createdAt: Date.now()
-                });
-                
-                console.log('✅ Abastecimento salvo no Firebase');
-            } catch (error) {
-                console.error('❌ Erro ao salvar abastecimento no Firebase:', error);
-                throw error;
-            }
-        }
-        
-        // Salvar manutenção no Realtime Database
-        async function saveMaintenanceToDatabase(maintenance) {
-            try {
-                if (!currentUserId) {
-                    console.log('⚠️ Sem usuário, salvando apenas localmente');
-                    return;
-                }
-                
-                console.log('💾 Salvando manutenção no Firebase:', maintenance.id);
-                
-                await database.ref(`users/${currentUserId}/maintenances/${maintenance.id}`).set({
-                    ...maintenance,
-                    createdAt: Date.now()
-                });
-                
-                console.log('✅ Manutenção salva no Firebase');
-            } catch (error) {
-                console.error('❌ Erro ao salvar manutenção no Firebase:', error);
-                throw error;
-            }
-        }
-        
-        // Carregar configurações
-        async function loadSettings() {
-            try {
-                if (currentUserId) {
-                    const snapshot = await database.ref(`users/${currentUserId}/settings`).once('value');
-                    if (snapshot.exists()) {
-                        settings = snapshot.val();
-                    } else {
-                        settings = {
-                            notifications: true,
-                            defaultFuelType: 'Gasolina',
-                            fuelPrice: 5.89
-                        };
-                    }
+                // Carregar configurações
+                const settingsSnapshot = await database.ref(`users/${userId}/settings`).once('value');
+                if (settingsSnapshot.exists()) {
+                    settings = settingsSnapshot.val();
+                    localStorage.setItem('fuelmanager_settings', JSON.stringify(settings));
                 } else {
                     settings = JSON.parse(localStorage.getItem('fuelmanager_settings')) || {
                         notifications: true,
@@ -1423,10 +1416,144 @@
                     };
                 }
                 
+                // Carregar veículos
+                const vehiclesSnapshot = await database.ref(`users/${userId}/vehicles`).once('value');
+                if (vehiclesSnapshot.exists()) {
+                    const data = vehiclesSnapshot.val();
+                    vehicles = Object.keys(data).map(key => ({
+                        id: key,
+                        ...data[key]
+                    }));
+                    localStorage.setItem('vehicles', JSON.stringify(vehicles));
+                } else {
+                    vehicles = JSON.parse(localStorage.getItem('vehicles')) || [];
+                }
+                
+                // Carregar abastecimentos
+                const refuelsSnapshot = await database.ref(`users/${userId}/refuels`).once('value');
+                if (refuelsSnapshot.exists()) {
+                    const data = refuelsSnapshot.val();
+                    refuels = Object.keys(data).map(key => ({
+                        id: key,
+                        ...data[key]
+                    }));
+                    localStorage.setItem('refuels', JSON.stringify(refuels));
+                } else {
+                    refuels = JSON.parse(localStorage.getItem('refuels')) || [];
+                }
+                
+                // Carregar manutenções
+                const maintenancesSnapshot = await database.ref(`users/${userId}/maintenances`).once('value');
+                if (maintenancesSnapshot.exists()) {
+                    const data = maintenancesSnapshot.val();
+                    maintenances = Object.keys(data).map(key => ({
+                        id: key,
+                        ...data[key]
+                    }));
+                    localStorage.setItem('maintenances', JSON.stringify(maintenances));
+                } else {
+                    maintenances = JSON.parse(localStorage.getItem('maintenances')) || [];
+                }
+                
+                updateUI();
+                console.log('✅ Dados carregados do Firebase');
+                
+            } catch (error) {
+                console.error('❌ Erro ao carregar dados do Firebase:', error);
+                loadFromLocalStorage();
+            }
+        }
+        
+        // Atualizar interface do usuário
+        function updateUI() {
+            loadVehicles();
+            loadRefuels();
+            loadMaintenances();
+            
+            // Atualizar configurações na interface
+            if (settings) {
                 document.getElementById('notificationSettings').value = settings.notifications;
-                document.getElementById('defaultFuelType').value = settings.defaultFuelType;
-                document.getElementById('refuelPrice').value = settings.fuelPrice;
-                document.getElementById('currentFuelPrice').textContent = `R$ ${settings.fuelPrice.toFixed(2)}/L`;
+                document.getElementById('defaultFuelType').value = settings.defaultFuelType || 'Gasolina';
+                document.getElementById('refuelPrice').value = settings.fuelPrice || 5.89;
+                document.getElementById('currentFuelPrice').textContent = `R$ ${(settings.fuelPrice || 5.89).toFixed(2)}/L`;
+            }
+        }
+        
+        // FUNÇÕES DO REALTIME DATABASE (sem autenticação)
+        
+        // Salvar veículo
+        async function saveVehicleToDatabase(vehicle) {
+            try {
+                console.log('💾 Salvando veículo:', vehicle.id);
+                
+                await database.ref(`users/${userId}/vehicles/${vehicle.id}`).set({
+                    ...vehicle,
+                    lastUpdated: Date.now()
+                });
+                
+                console.log('✅ Veículo salvo');
+                return true;
+            } catch (error) {
+                console.error('❌ Erro ao salvar veículo:', error);
+                return false;
+            }
+        }
+        
+        // Salvar abastecimento
+        async function saveRefuelToDatabase(refuel) {
+            try {
+                console.log('💾 Salvando abastecimento:', refuel.id);
+                
+                await database.ref(`users/${userId}/refuels/${refuel.id}`).set({
+                    ...refuel,
+                    lastUpdated: Date.now()
+                });
+                
+                console.log('✅ Abastecimento salvo');
+                return true;
+            } catch (error) {
+                console.error('❌ Erro ao salvar abastecimento:', error);
+                return false;
+            }
+        }
+        
+        // Salvar manutenção
+        async function saveMaintenanceToDatabase(maintenance) {
+            try {
+                console.log('💾 Salvando manutenção:', maintenance.id);
+                
+                await database.ref(`users/${userId}/maintenances/${maintenance.id}`).set({
+                    ...maintenance,
+                    lastUpdated: Date.now()
+                });
+                
+                console.log('✅ Manutenção salva');
+                return true;
+            } catch (error) {
+                console.error('❌ Erro ao salvar manutenção:', error);
+                return false;
+            }
+        }
+        
+        // Carregar configurações
+        async function loadSettings() {
+            try {
+                const snapshot = await database.ref(`users/${userId}/settings`).once('value');
+                if (snapshot.exists()) {
+                    settings = snapshot.val();
+                } else {
+                    settings = JSON.parse(localStorage.getItem('fuelmanager_settings')) || {
+                        notifications: true,
+                        defaultFuelType: 'Gasolina',
+                        fuelPrice: 5.89
+                    };
+                }
+                
+                // Atualizar interface
+                document.getElementById('notificationSettings').value = settings.notifications;
+                document.getElementById('defaultFuelType').value = settings.defaultFuelType || 'Gasolina';
+                document.getElementById('refuelPrice').value = settings.fuelPrice || 5.89;
+                document.getElementById('currentFuelPrice').textContent = `R$ ${(settings.fuelPrice || 5.89).toFixed(2)}/L`;
             } catch (error) {
                 console.error('Erro ao carregar configurações:', error);
             }
@@ -1438,11 +1565,14 @@
                 settings.notifications = document.getElementById('notificationSettings').value === 'true';
                 settings.defaultFuelType = document.getElementById('defaultFuelType').value;
                 
-                if (currentUserId) {
-                    await database.ref(`users/${currentUserId}/settings`).set(settings);
+                // Salvar localmente
+                localStorage.setItem('fuelmanager_settings', JSON.stringify(settings));
+                
+                // Salvar no Firebase se estiver online
+                if (isOnline) {
+                    await database.ref(`users/${userId}/settings`).set(settings);
                 }
                 
-                localStorage.setItem('fuelmanager_settings', JSON.stringify(settings));
                 closeModal('settingsModal');
                 showNotification('Configurações salvas com sucesso!');
             } catch (error) {
@@ -1463,15 +1593,18 @@
                 maintenances = [];
                 currentVehicle = null;
                 
-                if (currentUserId) {
-                    // Limpar dados do Realtime Database
-                    await database.ref(`users/${currentUserId}`).remove();
-                }
-                
+                // Limpar localStorage
                 localStorage.removeItem('vehicles');
                 localStorage.removeItem('refuels');
                 localStorage.removeItem('maintenances');
+                localStorage.removeItem('fuelmanager_settings');
                 
+                // Limpar Firebase se estiver online
+                if (isOnline) {
+                    await database.ref(`users/${userId}`).remove();
+                }
+                
+                // Atualizar interface
                 loadVehicles();
                 loadRefuels();
                 loadMaintenances();
@@ -1486,244 +1619,190 @@
             }
         }
         
-        // Função para carregar veículos
-        async function loadVehicles() {
-            try {
-                if (currentUserId) {
-                    const snapshot = await database.ref(`users/${currentUserId}/vehicles`).once('value');
-                    if (snapshot.exists()) {
-                        const data = snapshot.val();
-                        vehicles = Object.keys(data).map(key => ({
-                            id: key,
-                            ...data[key]
-                        }));
-                        
-                        localStorage.setItem('vehicles', JSON.stringify(vehicles));
-                    }
-                }
-                
-                const vehiclesList = document.getElementById('vehiclesList');
-                const refuelVehicleSelect = document.getElementById('refuelVehicle');
-                const maintenanceVehicleSelect = document.getElementById('maintenanceVehicle');
-                
-                vehiclesList.innerHTML = '';
-                refuelVehicleSelect.innerHTML = '<option value="">Selecione um veículo</option>';
-                maintenanceVehicleSelect.innerHTML = '<option value="">Selecione um veículo</option>';
-                
-                if (vehicles.length === 0) {
-                    vehiclesList.innerHTML = `
-                        <div class="empty-state">
-                            <i class="fas fa-car"></i>
-                            <h3>Nenhum veículo cadastrado</h3>
-                            <p>Adicione seu primeiro veículo para começar</p>
-                        </div>
-                    `;
-                    return;
-                }
-                
-                vehicles.forEach(vehicle => {
-                    const vehicleElement = document.createElement('div');
-                    vehicleElement.className = 'vehicle-info';
-                    vehicleElement.style.cursor = 'pointer';
-                    vehicleElement.style.marginBottom = '15px';
-                    vehicleElement.onclick = () => selectVehicle(vehicle.id);
-                    
-                    const iconClass = vehicle.type === 'car' ? 'car' : 
-                                     vehicle.type === 'motorcycle' ? 'motorcycle' : 'truck';
-                    
-                    vehicleElement.innerHTML = `
-                        <div class="vehicle-icon">
-                            <i class="fas fa-${iconClass}"></i>
-                        </div>
-                        <div class="vehicle-details">
-                            <h3>${vehicle.model}</h3>
-                            <p>${vehicle.plate} • ${vehicle.year}</p>
-                        </div>
-                        <div class="delete-btn" onclick="event.stopPropagation(); deleteVehicle('${vehicle.id}')">
-                            <i class="fas fa-trash"></i>
-                        </div>
-                    `;
-                    
-                    vehiclesList.appendChild(vehicleElement);
-                    
-                    const option1 = document.createElement('option');
-                    option1.value = vehicle.id;
-                    option1.textContent = `${vehicle.model} (${vehicle.plate})`;
-                    refuelVehicleSelect.appendChild(option1);
-                    
-                    const option2 = document.createElement('option');
-                    option2.value = vehicle.id;
-                    option2.textContent = `${vehicle.model} (${vehicle.plate})`;
-                    maintenanceVehicleSelect.appendChild(option2);
-                });
-            } catch (error) {
-                console.error('Erro ao carregar veículos:', error);
-                loadFromLocalStorage();
+        // Função para carregar veículos (da memória)
+        function loadVehicles() {
+            const vehiclesList = document.getElementById('vehiclesList');
+            const refuelVehicleSelect = document.getElementById('refuelVehicle');
+            const maintenanceVehicleSelect = document.getElementById('maintenanceVehicle');
+            
+            vehiclesList.innerHTML = '';
+            refuelVehicleSelect.innerHTML = '<option value="">Selecione um veículo</option>';
+            maintenanceVehicleSelect.innerHTML = '<option value="">Selecione um veículo</option>';
+            
+            if (vehicles.length === 0) {
+                vehiclesList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-car"></i>
+                        <h3>Nenhum veículo cadastrado</h3>
+                        <p>Adicione seu primeiro veículo para começar</p>
+                    </div>
+                `;
+                return;
             }
+            
+            vehicles.forEach(vehicle => {
+                const vehicleElement = document.createElement('div');
+                vehicleElement.className = 'vehicle-info';
+                vehicleElement.style.cursor = 'pointer';
+                vehicleElement.style.marginBottom = '15px';
+                vehicleElement.onclick = () => selectVehicle(vehicle.id);
+                
+                const iconClass = vehicle.type === 'car' ? 'car' : 
+                                 vehicle.type === 'motorcycle' ? 'motorcycle' : 'truck';
+                
+                vehicleElement.innerHTML = `
+                    <div class="vehicle-icon">
+                        <i class="fas fa-${iconClass}"></i>
+                    </div>
+                    <div class="vehicle-details">
+                        <h3>${vehicle.model}</h3>
+                        <p>${vehicle.plate} • ${vehicle.year}</p>
+                    </div>
+                    <div class="delete-btn" onclick="event.stopPropagation(); deleteVehicle('${vehicle.id}')">
+                        <i class="fas fa-trash"></i>
+                    </div>
+                `;
+                
+                vehiclesList.appendChild(vehicleElement);
+                
+                const option1 = document.createElement('option');
+                option1.value = vehicle.id;
+                option1.textContent = `${vehicle.model} (${vehicle.plate})`;
+                refuelVehicleSelect.appendChild(option1);
+                
+                const option2 = document.createElement('option');
+                option2.value = vehicle.id;
+                option2.textContent = `${vehicle.model} (${vehicle.plate})`;
+                maintenanceVehicleSelect.appendChild(option2);
+            });
         }
         
-        // Função para carregar abastecimentos
-        async function loadRefuels() {
-            try {
-                if (currentUserId) {
-                    const snapshot = await database.ref(`users/${currentUserId}/refuels`).once('value');
-                    if (snapshot.exists()) {
-                        const data = snapshot.val();
-                        refuels = Object.keys(data).map(key => ({
-                            id: key,
-                            ...data[key]
-                        }));
-                        
-                        localStorage.setItem('refuels', JSON.stringify(refuels));
-                    }
-                }
-                
-                const refuelHistoryList = document.getElementById('refuelHistoryList');
-                refuelHistoryList.innerHTML = '';
-                
-                if (refuels.length === 0) {
-                    refuelHistoryList.innerHTML = `
-                        <div class="empty-state">
-                            <i class="fas fa-history"></i>
-                            <p>Nenhum abastecimento registrado</p>
-                        </div>
-                    `;
-                    return;
-                }
-                
-                const recentRefuels = [...refuels].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
-                
-                recentRefuels.forEach(refuel => {
-                    const vehicle = vehicles.find(v => v.id === refuel.vehicleId);
-                    const vehicleName = vehicle ? `${vehicle.model} (${vehicle.plate})` : 'Veículo não encontrado';
-                    
-                    const refuelElement = document.createElement('div');
-                    refuelElement.className = 'list-item';
-                    
-                    refuelElement.innerHTML = `
-                        <div>
-                            <div class="item-title">${vehicleName}</div>
-                            <div class="item-details">${formatDate(refuel.date)} • ${refuel.station || 'Posto não informado'}</div>
-                        </div>
-                        <div class="item-value">R$ ${refuel.amount.toFixed(2)}</div>
-                    `;
-                    
-                    refuelHistoryList.appendChild(refuelElement);
-                });
-            } catch (error) {
-                console.error('Erro ao carregar abastecimentos:', error);
-                loadFromLocalStorage();
+        // Função para carregar abastecimentos (da memória)
+        function loadRefuels() {
+            const refuelHistoryList = document.getElementById('refuelHistoryList');
+            refuelHistoryList.innerHTML = '';
+            
+            if (refuels.length === 0) {
+                refuelHistoryList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-history"></i>
+                        <p>Nenhum abastecimento registrado</p>
+                    </div>
+                `;
+                return;
             }
+            
+            const recentRefuels = [...refuels].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
+            
+            recentRefuels.forEach(refuel => {
+                const vehicle = vehicles.find(v => v.id === refuel.vehicleId);
+                const vehicleName = vehicle ? `${vehicle.model} (${vehicle.plate})` : 'Veículo não encontrado';
+                
+                const refuelElement = document.createElement('div');
+                refuelElement.className = 'list-item';
+                
+                refuelElement.innerHTML = `
+                    <div>
+                        <div class="item-title">${vehicleName}</div>
+                        <div class="item-details">${formatDate(refuel.date)} • ${refuel.station || 'Posto não informado'}</div>
+                    </div>
+                    <div class="item-value">R$ ${refuel.amount.toFixed(2)}</div>
+                `;
+                
+                refuelHistoryList.appendChild(refuelElement);
+            });
         }
         
-        // Função para carregar manutenções
-        async function loadMaintenances() {
-            try {
-                if (currentUserId) {
-                    const snapshot = await database.ref(`users/${currentUserId}/maintenances`).once('value');
-                    if (snapshot.exists()) {
-                        const data = snapshot.val();
-                        maintenances = Object.keys(data).map(key => ({
-                            id: key,
-                            ...data[key]
-                        }));
-                        
-                        localStorage.setItem('maintenances', JSON.stringify(maintenances));
-                    }
-                }
+        // Função para carregar manutenções (da memória)
+        function loadMaintenances() {
+            const maintenanceHistoryList = document.getElementById('maintenanceHistoryList');
+            const maintenanceUpcomingList = document.getElementById('maintenanceUpcomingList');
+            const dashboardUpcomingList = document.getElementById('upcomingMaintenanceList');
+            
+            maintenanceHistoryList.innerHTML = '';
+            maintenanceUpcomingList.innerHTML = '';
+            dashboardUpcomingList.innerHTML = '';
+            
+            if (maintenances.length === 0) {
+                maintenanceHistoryList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-tools"></i>
+                        <p>Nenhuma manutenção registrada</p>
+                    </div>
+                `;
+                maintenanceUpcomingList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-calendar-check"></i>
+                        <p>Nenhuma manutenção agendada</p>
+                    </div>
+                `;
+                dashboardUpcomingList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-tools"></i>
+                        <p>Nenhuma manutenção agendada</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            const completedMaintenances = [];
+            const upcomingMaintenances = [];
+            const overdueMaintenances = [];
+            
+            maintenances.forEach(maintenance => {
+                const vehicle = vehicles.find(v => v.id === maintenance.vehicleId);
+                if (!vehicle) return;
                 
-                const maintenanceHistoryList = document.getElementById('maintenanceHistoryList');
-                const maintenanceUpcomingList = document.getElementById('maintenanceUpcomingList');
-                const dashboardUpcomingList = document.getElementById('upcomingMaintenanceList');
-                
-                maintenanceHistoryList.innerHTML = '';
-                maintenanceUpcomingList.innerHTML = '';
-                dashboardUpcomingList.innerHTML = '';
-                
-                if (maintenances.length === 0) {
-                    maintenanceHistoryList.innerHTML = `
-                        <div class="empty-state">
-                            <i class="fas fa-tools"></i>
-                            <p>Nenhuma manutenção registrada</p>
-                        </div>
-                    `;
-                    maintenanceUpcomingList.innerHTML = `
-                        <div class="empty-state">
-                            <i class="fas fa-calendar-check"></i>
-                            <p>Nenhuma manutenção agendada</p>
-                        </div>
-                    `;
-                    dashboardUpcomingList.innerHTML = `
-                        <div class="empty-state">
-                            <i class="fas fa-tools"></i>
-                            <p>Nenhuma manutenção agendada</p>
-                        </div>
-                    `;
-                    return;
-                }
-                
-                const completedMaintenances = [];
-                const upcomingMaintenances = [];
-                const overdueMaintenances = [];
-                
-                maintenances.forEach(maintenance => {
-                    const vehicle = vehicles.find(v => v.id === maintenance.vehicleId);
-                    if (!vehicle) return;
+                if (maintenance.completed) {
+                    completedMaintenances.push({...maintenance, vehicle});
+                } else {
+                    const nextKm = maintenance.lastKm + maintenance.repeatKm;
+                    const isOverdue = vehicle.km >= nextKm;
                     
-                    if (maintenance.completed) {
-                        completedMaintenances.push({...maintenance, vehicle});
+                    if (isOverdue) {
+                        overdueMaintenances.push({...maintenance, vehicle, nextKm});
                     } else {
-                        const nextKm = maintenance.lastKm + maintenance.repeatKm;
-                        const isOverdue = vehicle.km >= nextKm;
-                        
-                        if (isOverdue) {
-                            overdueMaintenances.push({...maintenance, vehicle, nextKm});
-                        } else {
-                            upcomingMaintenances.push({...maintenance, vehicle, nextKm});
-                        }
+                        upcomingMaintenances.push({...maintenance, vehicle, nextKm});
                     }
+                }
+            });
+            
+            upcomingMaintenances.sort((a, b) => a.nextKm - b.nextKm);
+            overdueMaintenances.sort((a, b) => a.nextKm - b.nextKm);
+            
+            displayUpcomingMaintenances(dashboardUpcomingList, [...overdueMaintenances, ...upcomingMaintenances]);
+            
+            if (completedMaintenances.length === 0) {
+                maintenanceHistoryList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-tools"></i>
+                        <p>Nenhuma manutenção concluída</p>
+                    </div>
+                `;
+            } else {
+                completedMaintenances.slice(0, 5).forEach(maintenance => {
+                    const element = createMaintenanceElement(maintenance, true);
+                    maintenanceHistoryList.appendChild(element);
+                });
+            }
+            
+            if (upcomingMaintenances.length === 0 && overdueMaintenances.length === 0) {
+                maintenanceUpcomingList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-calendar-check"></i>
+                        <p>Nenhuma manutenção agendada</p>
+                    </div>
+                `;
+            } else {
+                overdueMaintenances.forEach(maintenance => {
+                    const element = createMaintenanceElement(maintenance, false);
+                    maintenanceUpcomingList.appendChild(element);
                 });
                 
-                upcomingMaintenances.sort((a, b) => a.nextKm - b.nextKm);
-                overdueMaintenances.sort((a, b) => a.nextKm - b.nextKm);
-                
-                displayUpcomingMaintenances(dashboardUpcomingList, [...overdueMaintenances, ...upcomingMaintenances]);
-                
-                if (completedMaintenances.length === 0) {
-                    maintenanceHistoryList.innerHTML = `
-                        <div class="empty-state">
-                            <i class="fas fa-tools"></i>
-                            <p>Nenhuma manutenção concluída</p>
-                        </div>
-                    `;
-                } else {
-                    completedMaintenances.slice(0, 5).forEach(maintenance => {
-                        const element = createMaintenanceElement(maintenance, true);
-                        maintenanceHistoryList.appendChild(element);
-                    });
-                }
-                
-                if (upcomingMaintenances.length === 0 && overdueMaintenances.length === 0) {
-                    maintenanceUpcomingList.innerHTML = `
-                        <div class="empty-state">
-                            <i class="fas fa-calendar-check"></i>
-                            <p>Nenhuma manutenção agendada</p>
-                        </div>
-                    `;
-                } else {
-                    overdueMaintenances.forEach(maintenance => {
-                        const element = createMaintenanceElement(maintenance, false);
-                        maintenanceUpcomingList.appendChild(element);
-                    });
-                    
-                    upcomingMaintenances.forEach(maintenance => {
-                        const element = createMaintenanceElement(maintenance, false);
-                        maintenanceUpcomingList.appendChild(element);
-                    });
-                }
-            } catch (error) {
-                console.error('Erro ao carregar manutenções:', error);
-                loadFromLocalStorage();
+                upcomingMaintenances.forEach(maintenance => {
+                    const element = createMaintenanceElement(maintenance, false);
+                    maintenanceUpcomingList.appendChild(element);
+                });
             }
         }
         
@@ -1829,12 +1908,16 @@
                     tankLevel: 100
                 };
                 
+                // Adicionar localmente
                 vehicles.push(newVehicle);
                 localStorage.setItem('vehicles', JSON.stringify(vehicles));
                 
-                // Salvar no Realtime Database
-                await saveVehicleToDatabase(newVehicle);
+                // Salvar no Firebase se estiver online
+                if (isOnline) {
+                    await saveVehicleToDatabase(newVehicle);
+                }
                 
+                // Atualizar interface
                 loadVehicles();
                 selectVehicle(newVehicle.id);
                 closeModal('addVehicleModal');
@@ -1852,41 +1935,38 @@
             }
             
             try {
-                // Remover veículo
+                // Remover localmente
                 vehicles = vehicles.filter(v => v.id !== vehicleId);
-                
-                // Remover abastecimentos relacionados
                 refuels = refuels.filter(r => r.vehicleId !== vehicleId);
-                
-                // Remover manutenções relacionadas
                 maintenances = maintenances.filter(m => m.vehicleId !== vehicleId);
                 
+                // Salvar localmente
                 localStorage.setItem('vehicles', JSON.stringify(vehicles));
                 localStorage.setItem('refuels', JSON.stringify(refuels));
                 localStorage.setItem('maintenances', JSON.stringify(maintenances));
                 
-                // Remover do Realtime Database
-                if (currentUserId) {
-                    await database.ref(`users/${currentUserId}/vehicles/${vehicleId}`).remove();
+                // Remover do Firebase se estiver online
+                if (isOnline) {
+                    await database.ref(`users/${userId}/vehicles/${vehicleId}`).remove();
                     
                     // Remover abastecimentos relacionados
-                    const refuelsSnapshot = await database.ref(`users/${currentUserId}/refuels`).once('value');
+                    const refuelsSnapshot = await database.ref(`users/${userId}/refuels`).once('value');
                     if (refuelsSnapshot.exists()) {
                         const refuelsData = refuelsSnapshot.val();
                         Object.keys(refuelsData).forEach(key => {
                             if (refuelsData[key].vehicleId === vehicleId) {
-                                database.ref(`users/${currentUserId}/refuels/${key}`).remove();
+                                database.ref(`users/${userId}/refuels/${key}`).remove();
                             }
                         });
                     }
                     
                     // Remover manutenções relacionadas
-                    const maintenancesSnapshot = await database.ref(`users/${currentUserId}/maintenances`).once('value');
+                    const maintenancesSnapshot = await database.ref(`users/${userId}/maintenances`).once('value');
                     if (maintenancesSnapshot.exists()) {
                         const maintenancesData = maintenancesSnapshot.val();
                         Object.keys(maintenancesData).forEach(key => {
                             if (maintenancesData[key].vehicleId === vehicleId) {
-                                database.ref(`users/${currentUserId}/maintenances/${key}`).remove();
+                                database.ref(`users/${userId}/maintenances/${key}`).remove();
                             }
                         });
                     }
@@ -2145,11 +2225,12 @@
                     fullTank: fullTank
                 };
                 
+                // Adicionar localmente
                 refuels.push(newRefuel);
                 localStorage.setItem('refuels', JSON.stringify(refuels));
                 
+                // Atualizar veículo localmente
                 vehicle.km = km;
-                
                 if (fullTank) {
                     vehicle.tankLevel = 100;
                 } else {
@@ -2159,20 +2240,22 @@
                     const newLiters = Math.min(currentLiters + litersToAdd, tankCapacity);
                     vehicle.tankLevel = Math.round((newLiters / tankCapacity) * 100);
                 }
-                
                 localStorage.setItem('vehicles', JSON.stringify(vehicles));
                 
-                // Salvar no Realtime Database
-                await saveRefuelToDatabase(newRefuel);
-                await saveVehicleToDatabase(vehicle);
+                // Salvar no Firebase se estiver online
+                if (isOnline) {
+                    await saveRefuelToDatabase(newRefuel);
+                    await saveVehicleToDatabase(vehicle);
+                }
                 
+                // Atualizar interface
                 if (currentVehicle && currentVehicle.id === vehicleId) {
                     updateDashboard();
                 }
-                
                 loadRefuels();
                 updateStatistics();
                 
+                // Limpar campos
                 document.getElementById('refuelStation').value = '';
                 document.getElementById('refuelAmount').value = '';
                 document.getElementById('refuelLiters').value = '';
@@ -2219,20 +2302,24 @@
                     completed: completed
                 };
                 
+                // Adicionar localmente
                 maintenances.push(newMaintenance);
                 localStorage.setItem('maintenances', JSON.stringify(maintenances));
                 
-                // Salvar no Realtime Database
-                await saveMaintenanceToDatabase(newMaintenance);
+                // Salvar no Firebase se estiver online
+                if (isOnline) {
+                    await saveMaintenanceToDatabase(newMaintenance);
+                }
                 
+                // Limpar campos
                 document.getElementById('maintenanceName').value = '';
                 document.getElementById('maintenanceDescription').value = '';
                 document.getElementById('maintenanceKm').value = '';
                 document.getElementById('maintenanceRepeatKm').value = '';
                 document.getElementById('maintenanceCompleted').checked = false;
                 
+                // Atualizar interface
                 loadMaintenances();
-                
                 if (currentVehicle && currentVehicle.id === vehicleId) {
                     updateDashboard();
                 }
@@ -2274,6 +2361,7 @@
                 const maintenanceIndex = maintenances.findIndex(m => m.id === editingMaintenanceId);
                 if (maintenanceIndex === -1) return;
                 
+                // Atualizar localmente
                 maintenances[maintenanceIndex].name = document.getElementById('editMaintenanceName').value;
                 maintenances[maintenanceIndex].description = document.getElementById('editMaintenanceDescription').value;
                 maintenances[maintenanceIndex].date = document.getElementById('editMaintenanceDate').value;
@@ -2283,9 +2371,12 @@
                 
                 localStorage.setItem('maintenances', JSON.stringify(maintenances));
                 
-                // Atualizar no Realtime Database
-                await saveMaintenanceToDatabase(maintenances[maintenanceIndex]);
+                // Atualizar no Firebase se estiver online
+                if (isOnline) {
+                    await saveMaintenanceToDatabase(maintenances[maintenanceIndex]);
+                }
                 
+                // Atualizar interface
                 loadMaintenances();
                 closeModal('editMaintenanceModal');
                 showNotification('Manutenção atualizada com sucesso!');
@@ -2302,14 +2393,16 @@
                     return;
                 }
                 
+                // Remover localmente
                 maintenances = maintenances.filter(m => m.id !== editingMaintenanceId);
                 localStorage.setItem('maintenances', JSON.stringify(maintenances));
                 
-                // Remover do Realtime Database
-                if (currentUserId) {
-                    await database.ref(`users/${currentUserId}/maintenances/${editingMaintenanceId}`).remove();
+                // Remover do Firebase se estiver online
+                if (isOnline) {
+                    await database.ref(`users/${userId}/maintenances/${editingMaintenanceId}`).remove();
                 }
                 
+                // Atualizar interface
                 loadMaintenances();
                 closeModal('editMaintenanceModal');
                 showNotification('Manutenção excluída com sucesso!');
@@ -2539,8 +2632,10 @@
                 
                 localStorage.setItem('vehicles', JSON.stringify(vehicles));
                 
-                // Atualizar no Realtime Database
-                await saveVehicleToDatabase(currentVehicle);
+                // Atualizar no Firebase se estiver online
+                if (isOnline) {
+                    await saveVehicleToDatabase(currentVehicle);
+                }
                 
                 updateDashboard();
                 loadMaintenances();
@@ -2554,7 +2649,7 @@
         
         // Funções para gerenciar preço da gasolina
         function showFuelPriceModal() {
-            document.getElementById('newFuelPrice').value = settings.fuelPrice;
+            document.getElementById('newFuelPrice').value = settings.fuelPrice || 5.89;
             openModal('fuelPriceModal');
         }
         
@@ -2567,14 +2662,16 @@
                     return;
                 }
                 
+                // Atualizar localmente
                 settings.fuelPrice = newPrice;
-                
-                if (currentUserId) {
-                    await database.ref(`users/${currentUserId}/settings`).set(settings);
-                }
-                
                 localStorage.setItem('fuelmanager_settings', JSON.stringify(settings));
                 
+                // Atualizar Firebase se estiver online
+                if (isOnline) {
+                    await database.ref(`users/${userId}/settings`).set(settings);
+                }
+                
+                // Atualizar interface
                 document.getElementById('refuelPrice').value = newPrice;
                 document.getElementById('currentFuelPrice').textContent = `R$ ${newPrice.toFixed(2)}/L`;
                 
@@ -2692,6 +2789,9 @@
                 return false;
             }
         }
+        
+        // Inicializar testando a conexão
+        testConnection();
     </script>
 </body>
 </html>
