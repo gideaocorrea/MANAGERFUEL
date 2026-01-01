@@ -8,9 +8,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-database-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-auth-compat.js"></script>
     <style>
+        /* SEU CSS COMPLETO AQUI (mantenha todo o estilo que você já tem) */
         * {
             margin: 0;
             padding: 0;
@@ -1217,7 +1218,7 @@
     </div>
 
     <script>
-        // Configuração do Firebase
+        // Configuração do Firebase para Realtime Database
         const firebaseConfig = {
             apiKey: "AIzaSyAx529m4KDCWW2Jiea38jTtRf8EhZnaAME",
             authDomain: "manager-fuel.firebaseapp.com",
@@ -1231,7 +1232,7 @@
 
         // Inicializar Firebase
         firebase.initializeApp(firebaseConfig);
-        const db = firebase.firestore();
+        const database = firebase.database();
         const auth = firebase.auth();
 
         // Dados da aplicação
@@ -1249,9 +1250,11 @@
             await initApp();
         });
         
-        // Inicializar aplicativo com Firebase
+        // Inicializar aplicativo com Firebase Realtime Database
         async function initApp() {
             try {
+                console.log('🚀 Iniciando FuelManager com Realtime Database...');
+                
                 // Configurar data atual
                 const today = new Date();
                 const formattedDate = today.toISOString().substr(0, 10);
@@ -1279,9 +1282,11 @@
                 } else {
                     updateDashboard();
                 }
+                
+                showNotification('Aplicativo carregado com sucesso!');
             } catch (error) {
                 console.error('Erro na inicialização:', error);
-                showNotification('Erro ao carregar dados do aplicativo.');
+                showNotification('Erro ao carregar dados. Usando modo offline.');
                 loadFromLocalStorage();
             }
         }
@@ -1292,14 +1297,18 @@
                 auth.onAuthStateChanged(async (user) => {
                     if (user) {
                         currentUserId = user.uid;
+                        console.log('✅ Usuário autenticado:', user.uid);
                         resolve();
                     } else {
                         try {
+                            console.log('🔄 Criando usuário anônimo...');
                             const result = await auth.signInAnonymously();
                             currentUserId = result.user.uid;
+                            console.log('✅ Usuário anônimo criado:', currentUserId);
                             resolve();
                         } catch (error) {
-                            console.error('Erro na autenticação:', error);
+                            console.error('❌ Erro na autenticação:', error);
+                            console.log('⚠️ Usando modo offline');
                             resolve();
                         }
                     }
@@ -1324,59 +1333,70 @@
             updateDashboard();
         }
         
-        // Salvar veículo no Firestore
-        async function saveVehicleToFirestore(vehicle) {
+        // FUNÇÕES DO REALTIME DATABASE
+        
+        // Salvar veículo no Realtime Database
+        async function saveVehicleToDatabase(vehicle) {
             try {
-                if (!currentUserId) return;
+                if (!currentUserId) {
+                    console.log('⚠️ Sem usuário, salvando apenas localmente');
+                    return;
+                }
                 
-                await db.collection('users')
-                    .doc(currentUserId)
-                    .collection('vehicles')
-                    .doc(vehicle.id)
-                    .set({
-                        ...vehicle,
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
+                console.log('💾 Salvando veículo no Firebase:', vehicle.id);
+                
+                await database.ref(`users/${currentUserId}/vehicles/${vehicle.id}`).set({
+                    ...vehicle,
+                    createdAt: Date.now()
+                });
+                
+                console.log('✅ Veículo salvo no Firebase');
             } catch (error) {
-                console.error('Erro ao salvar veículo no Firestore:', error);
+                console.error('❌ Erro ao salvar veículo no Firebase:', error);
                 throw error;
             }
         }
         
-        // Salvar abastecimento no Firestore
-        async function saveRefuelToFirestore(refuel) {
+        // Salvar abastecimento no Realtime Database
+        async function saveRefuelToDatabase(refuel) {
             try {
-                if (!currentUserId) return;
+                if (!currentUserId) {
+                    console.log('⚠️ Sem usuário, salvando apenas localmente');
+                    return;
+                }
                 
-                await db.collection('users')
-                    .doc(currentUserId)
-                    .collection('refuels')
-                    .doc(refuel.id)
-                    .set({
-                        ...refuel,
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
+                console.log('💾 Salvando abastecimento no Firebase:', refuel.id);
+                
+                await database.ref(`users/${currentUserId}/refuels/${refuel.id}`).set({
+                    ...refuel,
+                    createdAt: Date.now()
+                });
+                
+                console.log('✅ Abastecimento salvo no Firebase');
             } catch (error) {
-                console.error('Erro ao salvar abastecimento no Firestore:', error);
+                console.error('❌ Erro ao salvar abastecimento no Firebase:', error);
                 throw error;
             }
         }
         
-        // Salvar manutenção no Firestore
-        async function saveMaintenanceToFirestore(maintenance) {
+        // Salvar manutenção no Realtime Database
+        async function saveMaintenanceToDatabase(maintenance) {
             try {
-                if (!currentUserId) return;
+                if (!currentUserId) {
+                    console.log('⚠️ Sem usuário, salvando apenas localmente');
+                    return;
+                }
                 
-                await db.collection('users')
-                    .doc(currentUserId)
-                    .collection('maintenances')
-                    .doc(maintenance.id)
-                    .set({
-                        ...maintenance,
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
+                console.log('💾 Salvando manutenção no Firebase:', maintenance.id);
+                
+                await database.ref(`users/${currentUserId}/maintenances/${maintenance.id}`).set({
+                    ...maintenance,
+                    createdAt: Date.now()
+                });
+                
+                console.log('✅ Manutenção salva no Firebase');
             } catch (error) {
-                console.error('Erro ao salvar manutenção no Firestore:', error);
+                console.error('❌ Erro ao salvar manutenção no Firebase:', error);
                 throw error;
             }
         }
@@ -1385,9 +1405,9 @@
         async function loadSettings() {
             try {
                 if (currentUserId) {
-                    const doc = await db.collection('users').doc(currentUserId).collection('settings').doc('app').get();
-                    if (doc.exists) {
-                        settings = doc.data();
+                    const snapshot = await database.ref(`users/${currentUserId}/settings`).once('value');
+                    if (snapshot.exists()) {
+                        settings = snapshot.val();
                     } else {
                         settings = {
                             notifications: true,
@@ -1419,7 +1439,7 @@
                 settings.defaultFuelType = document.getElementById('defaultFuelType').value;
                 
                 if (currentUserId) {
-                    await db.collection('users').doc(currentUserId).collection('settings').doc('app').set(settings);
+                    await database.ref(`users/${currentUserId}/settings`).set(settings);
                 }
                 
                 localStorage.setItem('fuelmanager_settings', JSON.stringify(settings));
@@ -1444,28 +1464,8 @@
                 currentVehicle = null;
                 
                 if (currentUserId) {
-                    // Limpar dados do Firestore
-                    const batch = db.batch();
-                    
-                    // Limpar veículos
-                    const vehiclesSnapshot = await db.collection('users').doc(currentUserId).collection('vehicles').get();
-                    vehiclesSnapshot.forEach(doc => {
-                        batch.delete(doc.ref);
-                    });
-                    
-                    // Limpar abastecimentos
-                    const refuelsSnapshot = await db.collection('users').doc(currentUserId).collection('refuels').get();
-                    refuelsSnapshot.forEach(doc => {
-                        batch.delete(doc.ref);
-                    });
-                    
-                    // Limpar manutenções
-                    const maintenancesSnapshot = await db.collection('users').doc(currentUserId).collection('maintenances').get();
-                    maintenancesSnapshot.forEach(doc => {
-                        batch.delete(doc.ref);
-                    });
-                    
-                    await batch.commit();
+                    // Limpar dados do Realtime Database
+                    await database.ref(`users/${currentUserId}`).remove();
                 }
                 
                 localStorage.removeItem('vehicles');
@@ -1490,21 +1490,16 @@
         async function loadVehicles() {
             try {
                 if (currentUserId) {
-                    const snapshot = await db.collection('users')
-                        .doc(currentUserId)
-                        .collection('vehicles')
-                        .orderBy('createdAt', 'desc')
-                        .get();
-                    
-                    vehicles = [];
-                    snapshot.forEach(doc => {
-                        vehicles.push({
-                            id: doc.id,
-                            ...doc.data()
-                        });
-                    });
-                    
-                    localStorage.setItem('vehicles', JSON.stringify(vehicles));
+                    const snapshot = await database.ref(`users/${currentUserId}/vehicles`).once('value');
+                    if (snapshot.exists()) {
+                        const data = snapshot.val();
+                        vehicles = Object.keys(data).map(key => ({
+                            id: key,
+                            ...data[key]
+                        }));
+                        
+                        localStorage.setItem('vehicles', JSON.stringify(vehicles));
+                    }
                 }
                 
                 const vehiclesList = document.getElementById('vehiclesList');
@@ -1571,22 +1566,16 @@
         async function loadRefuels() {
             try {
                 if (currentUserId) {
-                    const snapshot = await db.collection('users')
-                        .doc(currentUserId)
-                        .collection('refuels')
-                        .orderBy('createdAt', 'desc')
-                        .limit(50)
-                        .get();
-                    
-                    refuels = [];
-                    snapshot.forEach(doc => {
-                        refuels.push({
-                            id: doc.id,
-                            ...doc.data()
-                        });
-                    });
-                    
-                    localStorage.setItem('refuels', JSON.stringify(refuels));
+                    const snapshot = await database.ref(`users/${currentUserId}/refuels`).once('value');
+                    if (snapshot.exists()) {
+                        const data = snapshot.val();
+                        refuels = Object.keys(data).map(key => ({
+                            id: key,
+                            ...data[key]
+                        }));
+                        
+                        localStorage.setItem('refuels', JSON.stringify(refuels));
+                    }
                 }
                 
                 const refuelHistoryList = document.getElementById('refuelHistoryList');
@@ -1631,21 +1620,16 @@
         async function loadMaintenances() {
             try {
                 if (currentUserId) {
-                    const snapshot = await db.collection('users')
-                        .doc(currentUserId)
-                        .collection('maintenances')
-                        .orderBy('createdAt', 'desc')
-                        .get();
-                    
-                    maintenances = [];
-                    snapshot.forEach(doc => {
-                        maintenances.push({
-                            id: doc.id,
-                            ...doc.data()
-                        });
-                    });
-                    
-                    localStorage.setItem('maintenances', JSON.stringify(maintenances));
+                    const snapshot = await database.ref(`users/${currentUserId}/maintenances`).once('value');
+                    if (snapshot.exists()) {
+                        const data = snapshot.val();
+                        maintenances = Object.keys(data).map(key => ({
+                            id: key,
+                            ...data[key]
+                        }));
+                        
+                        localStorage.setItem('maintenances', JSON.stringify(maintenances));
+                    }
                 }
                 
                 const maintenanceHistoryList = document.getElementById('maintenanceHistoryList');
@@ -1848,10 +1832,8 @@
                 vehicles.push(newVehicle);
                 localStorage.setItem('vehicles', JSON.stringify(vehicles));
                 
-                // Salvar no Firestore
-                if (currentUserId) {
-                    await saveVehicleToFirestore(newVehicle);
-                }
+                // Salvar no Realtime Database
+                await saveVehicleToDatabase(newVehicle);
                 
                 loadVehicles();
                 selectVehicle(newVehicle.id);
@@ -1883,26 +1865,31 @@
                 localStorage.setItem('refuels', JSON.stringify(refuels));
                 localStorage.setItem('maintenances', JSON.stringify(maintenances));
                 
-                // Remover do Firestore
+                // Remover do Realtime Database
                 if (currentUserId) {
-                    const batch = db.batch();
-                    
-                    // Remover veículo
-                    batch.delete(db.collection('users').doc(currentUserId).collection('vehicles').doc(vehicleId));
+                    await database.ref(`users/${currentUserId}/vehicles/${vehicleId}`).remove();
                     
                     // Remover abastecimentos relacionados
-                    const refuelsSnapshot = await db.collection('users').doc(currentUserId).collection('refuels').where('vehicleId', '==', vehicleId).get();
-                    refuelsSnapshot.forEach(doc => {
-                        batch.delete(doc.ref);
-                    });
+                    const refuelsSnapshot = await database.ref(`users/${currentUserId}/refuels`).once('value');
+                    if (refuelsSnapshot.exists()) {
+                        const refuelsData = refuelsSnapshot.val();
+                        Object.keys(refuelsData).forEach(key => {
+                            if (refuelsData[key].vehicleId === vehicleId) {
+                                database.ref(`users/${currentUserId}/refuels/${key}`).remove();
+                            }
+                        });
+                    }
                     
                     // Remover manutenções relacionadas
-                    const maintenancesSnapshot = await db.collection('users').doc(currentUserId).collection('maintenances').where('vehicleId', '==', vehicleId).get();
-                    maintenancesSnapshot.forEach(doc => {
-                        batch.delete(doc.ref);
-                    });
-                    
-                    await batch.commit();
+                    const maintenancesSnapshot = await database.ref(`users/${currentUserId}/maintenances`).once('value');
+                    if (maintenancesSnapshot.exists()) {
+                        const maintenancesData = maintenancesSnapshot.val();
+                        Object.keys(maintenancesData).forEach(key => {
+                            if (maintenancesData[key].vehicleId === vehicleId) {
+                                database.ref(`users/${currentUserId}/maintenances/${key}`).remove();
+                            }
+                        });
+                    }
                 }
                 
                 // Atualizar interface
@@ -2175,11 +2162,9 @@
                 
                 localStorage.setItem('vehicles', JSON.stringify(vehicles));
                 
-                // Salvar no Firestore
-                if (currentUserId) {
-                    await saveRefuelToFirestore(newRefuel);
-                    await saveVehicleToFirestore(vehicle);
-                }
+                // Salvar no Realtime Database
+                await saveRefuelToDatabase(newRefuel);
+                await saveVehicleToDatabase(vehicle);
                 
                 if (currentVehicle && currentVehicle.id === vehicleId) {
                     updateDashboard();
@@ -2237,10 +2222,8 @@
                 maintenances.push(newMaintenance);
                 localStorage.setItem('maintenances', JSON.stringify(maintenances));
                 
-                // Salvar no Firestore
-                if (currentUserId) {
-                    await saveMaintenanceToFirestore(newMaintenance);
-                }
+                // Salvar no Realtime Database
+                await saveMaintenanceToDatabase(newMaintenance);
                 
                 document.getElementById('maintenanceName').value = '';
                 document.getElementById('maintenanceDescription').value = '';
@@ -2300,10 +2283,8 @@
                 
                 localStorage.setItem('maintenances', JSON.stringify(maintenances));
                 
-                // Atualizar no Firestore
-                if (currentUserId) {
-                    await saveMaintenanceToFirestore(maintenances[maintenanceIndex]);
-                }
+                // Atualizar no Realtime Database
+                await saveMaintenanceToDatabase(maintenances[maintenanceIndex]);
                 
                 loadMaintenances();
                 closeModal('editMaintenanceModal');
@@ -2324,9 +2305,9 @@
                 maintenances = maintenances.filter(m => m.id !== editingMaintenanceId);
                 localStorage.setItem('maintenances', JSON.stringify(maintenances));
                 
-                // Remover do Firestore
+                // Remover do Realtime Database
                 if (currentUserId) {
-                    await db.collection('users').doc(currentUserId).collection('maintenances').doc(editingMaintenanceId).delete();
+                    await database.ref(`users/${currentUserId}/maintenances/${editingMaintenanceId}`).remove();
                 }
                 
                 loadMaintenances();
@@ -2558,10 +2539,8 @@
                 
                 localStorage.setItem('vehicles', JSON.stringify(vehicles));
                 
-                // Atualizar no Firestore
-                if (currentUserId) {
-                    await saveVehicleToFirestore(currentVehicle);
-                }
+                // Atualizar no Realtime Database
+                await saveVehicleToDatabase(currentVehicle);
                 
                 updateDashboard();
                 loadMaintenances();
@@ -2591,7 +2570,7 @@
                 settings.fuelPrice = newPrice;
                 
                 if (currentUserId) {
-                    await db.collection('users').doc(currentUserId).collection('settings').doc('app').set(settings);
+                    await database.ref(`users/${currentUserId}/settings`).set(settings);
                 }
                 
                 localStorage.setItem('fuelmanager_settings', JSON.stringify(settings));
@@ -2693,6 +2672,25 @@
         
         function toggleNotifications() {
             showNotification('Não há novas notificações.');
+        }
+        
+        // Teste de conexão com Firebase
+        async function testConnection() {
+            try {
+                console.log('🔍 Testando conexão com Firebase Realtime Database...');
+                
+                const testRef = database.ref('testConnection');
+                await testRef.set({
+                    timestamp: Date.now(),
+                    message: 'Teste de conexão do FuelManager'
+                });
+                
+                console.log('✅ Conexão com Firebase estabelecida!');
+                return true;
+            } catch (error) {
+                console.error('❌ Erro na conexão com Firebase:', error);
+                return false;
+            }
         }
     </script>
 </body>
